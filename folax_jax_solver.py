@@ -66,6 +66,25 @@ def compute_element_energy_sri(node_coords, node_u, mu, lam):
     return energy_shear + energy_vol
 
 
+def compute_element_energy_bbar(node_coords, node_u, mu, lam):
+    """B-bar formulation for nearly incompressible Q4 elements."""
+    def point_energy(pt):
+        strain, det_J = compute_strain(pt, node_coords, node_u)
+        trace_e = strain[0, 0] + strain[1, 1]
+        shear = mu * (
+            strain[0, 0]**2 + strain[1, 1]**2 + 2.0 * strain[0, 1]**2
+        )
+        return shear, trace_e, det_J
+
+    shear_vals, trace_vals, detJ_vals = jax.vmap(lambda pt: point_energy(pt))(GAUSS_2X2)
+    total_weight = jnp.sum(detJ_vals)
+    avg_trace = jnp.sum(trace_vals * detJ_vals) / total_weight
+    energy_shear = jnp.sum(shear_vals * detJ_vals)
+    energy_vol = 0.5 * lam * avg_trace**2 * total_weight
+
+    return energy_shear + energy_vol
+
+
 def compute_element_centroid_stress(node_coords, node_u, mu, lam):
     """Compute stress at the element centroid for error estimation."""
     strain, _ = compute_strain(GAUSS_1X1[0], node_coords, node_u)
@@ -93,8 +112,10 @@ def global_potential_energy(u_free, u_boundary, free_dofs, boundary_dofs,
         elem_energy_fn = jax.vmap(lambda coords, u: compute_element_energy_fullint(coords, u, mu, lam))
     elif formulation == "sri":
         elem_energy_fn = jax.vmap(lambda coords, u: compute_element_energy_sri(coords, u, mu, lam))
+    elif formulation == "bbar":
+        elem_energy_fn = jax.vmap(lambda coords, u: compute_element_energy_bbar(coords, u, mu, lam))
     else:
-        raise ValueError("Unknown formulation: use 'full' or 'sri'")
+        raise ValueError("Unknown formulation: use 'full', 'sri' or 'bbar'")
 
     total_internal_energy = jnp.sum(elem_energy_fn(elem_coords, elem_u))
     external_work = jnp.dot(u_full.reshape(-1), f_ext)
